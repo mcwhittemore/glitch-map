@@ -2752,7 +2752,7 @@ var GlitchImage = require('./glitch-image');
 
 var accessToken = 'pk.eyJ1IjoibWN3aGl0dGVtb3JlIiwiYSI6IjI5Y2dTd1UifQ.7nBmjzRZ4M3bzEwoo3YIAQ';
 
-var mymap = L.map('map').setView([43.790833, -71.411111], 13);
+var mymap = L.map('map').setView([43.790833, -71.411111], 12);
 
 var tileUrl = 'https://api.tiles.mapbox.com/v4/{id}/{z}/{x}/{y}.webp?access_token={accessToken}';
 
@@ -2761,7 +2761,7 @@ var attr = 'Map data &copy; <a href="http://openstreetmap.org">OpenStreetMap</a>
 var layer = L.tileLayer(tileUrl, {
     attribution: attr,
     maxZoom: 18,
-    id: 'mapbox.streets',
+    id: 'mapbox.streets-satellite',
     accessToken: accessToken
   });
 
