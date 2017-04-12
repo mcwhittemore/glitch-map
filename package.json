@@ -1,0 +1,9 @@
+{
+  "scripts": {
+    "build": "browserify src/index.js -o dist/app.js"
+  },
+  "dependencies": {
+    "browserify": "^14.3.0",
+    "buffer": "^5.0.6"
+  }
+}
