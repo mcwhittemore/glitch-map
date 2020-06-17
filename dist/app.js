@@ -1,370 +1,4 @@
-(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
-(function (process){
-var fs = require( 'fs' );
-var path = require('path');
-var util = require('../util');
-
-var api = module.exports = {
-    command: 'destroy',
-    desc: 'overwrite file with random data',
-    builder: function (yargs) {
-        var options = {
-            times: {
-                alias: 't',
-                describe: 'the number of times to corrupt a byte',
-                type: 'number'
-            },
-            continuous: {
-                alias: 'c',
-                describe: 'whether or not to randomly continue corrupting the next piece of data',
-                'default': false,
-                type: 'boolean'
-            },
-            'continuous-chance': {
-                alias: 'C',
-                describe: 'the percent chance from 0 - 1 (0.1 = 10%, 1 = 100%) to continue corrupting the immediate next byte after the last byte instead of corrupting a random next byte',
-                'default': 0.6,
-                type: 'number'
-            }
-        };
-
-        return yargs.options(options)
-            .example('$0 destroy --min 0.3 --max 0.8 --input file.jpg --output file_byebyte.jpg');
-    },
-    handler: function (argv) {
-        var continuous = argv.c || argv.continuous;
-        var continuousChance = argv.C || argv.continuousChance || 0.6;
-
-        var times = argv.t || argv.times || 50;
-        var filepath = argv.i || argv.input;
-        var out = argv.o || argv.output;
-        var fileBuffer = fs.readFileSync( path.resolve( process.cwd(), filepath ) );
-        var len = fileBuffer.length;
-        var startStop = util.determineModificationRange(argv, len);
-        var start = startStop.start;
-        var stop = startStop.stop;
-        console.log( "File length: " + len );
-        console.log( "Randomly assigning hex values within bytes " + start + " and " + stop);
-
-        fileBuffer = api.fn(fileBuffer, {
-          times: times,
-          start: start,
-          stop: stop,
-          continuous: continuous,
-          continuousChance: continuousChance
-        });
-
-        fs.writeFileSync( path.resolve( process.cwd(), out ), fileBuffer );
-        console.log( 'Replaced ' + times + ' byte(s) with trash and exported to ' + out + '.' );
-    },
-    fn: function(fileBuffer, opts) {
-        var continuous = opts.continuous || false;
-        var continuousChance = opts.continuousChance || 0.6;
-
-        var len = fileBuffer.length;
-        var times = opts.times || 50;
-
-        var startStop = util.determineModificationRange(opts, len);
-        var start = startStop.start;
-        var stop = startStop.stop;
-
-        var offset = util.getRandomInt(start, stop);
-        for (var i = 0; i < times; i++) {
-            fileBuffer[ offset ] = util.getRandomInt(1, 255);
-
-            // If we have continuous set to true, and trying to continue would
-            // not run off the range of the buffer, we continue on to the next
-            // pixel slot to override if we beat our continuousChance. If not,
-            // we go to a random place within our range.
-            if (continuous && (offset + 1 <= len)) {
-                if ((continuousChance > Math.random()) && (offset + 1 <= stop)) {
-                    offset++;
-                } else {
-                    offset = util.getRandomInt(start, stop);
-                }
-            } else {
-                offset = util.getRandomInt(start, stop);
-            }
-        }
-
-        return fileBuffer;
-      
-    }
-};
-
-}).call(this,require('_process'))
-},{"../util":5,"_process":11,"fs":7,"path":10}],2:[function(require,module,exports){
-(function (process,Buffer){
-var fs = require( 'fs' );
-var path = require('path');
-var util = require('../util');
-var shuffle = require('shuffle-array')
-
-/**
- * Shuffle - works by taking the file and splitting it into various chunks.
- *
- * Chunks can have a specific length randomly determined by range
- * The chunks are then sorted according to 
- */
-
-var api = module.exports = {
-    command: 'shuffle',
-    desc: 'reorder the data in the file',
-    builder: function (yargs) {
-        var options = {
-            'chunk-min': {
-                describe: 'the minimum size a shuffled chunk may be',
-                type: 'number'
-            },
-            'chunk-max': {
-                describe: 'the maximum size a shuffled chunk may be',
-                type: 'number'
-            }
-        };
-
-        return yargs.options(options)
-            .usage([
-                'Shuffle builds a new file with the contents of the file shuffled into random chunks with ',
-                'each chunk being a random size between the specified --chunk-min and --chunk-max.'
-            ].join(''))
-            .example('$0 shuffle --chunk-min 40 --chunk-max 1000 --min 0.3 --max 0.8 --input file.jpg --output file_byebyte.jpg');
-    },
-    handler: function (argv) {
-        var filepath = argv.i || argv.input;
-        var out = argv.o || argv.output;
-        var fileBuffer = fs.readFileSync( path.resolve( process.cwd(), filepath ) );
-        var len = fileBuffer.length;
-        var startStop = util.determineModificationRange(argv, len);
-        var start = startStop.start;
-        var stop = startStop.stop;
-        console.log( "File length: " + len );
-        console.log( "Randomly shuffling chunks between " + start + " and " + stop);
-
-        var buf = api.fn(fileBuffer, {
-          start: start,
-          stop: stop,
-          chunkMin: argv['chunk-min'],
-          chunkMax: argv['chunk-max'],
-        });
-
-        fs.writeFileSync( path.resolve( process.cwd(), out ), buf );
-        console.log('Reshuffled bytes and wrote to ' + out + '.');
-    },
-    fn: function(fileBuffer, opts) {
-        var len = fileBuffer.length;
-
-        var startStop = util.determineModificationRange(opts, len);
-        var start = startStop.start;
-        var stop = startStop.stop;
-
-        var chunkBuf = fileBuffer.slice(start, stop);
-        var chunkBufLen = chunkBuf.length;
-        var chunks = [];
-
-        var index = 0;
-        while (index < chunkBufLen) {
-            var bufLeft = chunkBufLen - index;
-            var chunkSize = util.getRandomInt(opts.chunkMin, opts.chunkMax);
-            if (chunkSize > bufLeft) {
-                chunkSize = bufLeft;
-            }
-
-            var chunk = chunkBuf.slice(index, index + chunkSize);
-            chunks.push(chunk);
-
-            index += chunkSize;
-        }
-
-        var buf = Buffer.alloc(len);
-        var bufIndex = 0;
-        if (start > 0) {
-            fileBuffer.copy(buf, bufIndex, 0, start);
-            bufIndex = start;
-        }
-
-        shuffle(chunks);
-
-        chunks.forEach(function (chunk) {
-            var time = Date.now();
-            chunk.copy(buf, bufIndex, 0, chunk.length);
-            bufIndex += chunk.length;
-            var doneTime = Date.now();
-        });
-
-        if (stop < len) {
-            fileBuffer.copy(buf, bufIndex, stop, len);
-        }
-
-        return buf;
-    }
-};
-
-}).call(this,require('_process'),require("buffer").Buffer)
-},{"../util":5,"_process":11,"buffer":8,"fs":7,"path":10,"shuffle-array":4}],3:[function(require,module,exports){
-module.exports = {
-  shuffle: require('./commands/shuffle').fn,
-  destroy: require('./commands/destroy').fn
-};
-
-
-},{"./commands/destroy":1,"./commands/shuffle":2}],4:[function(require,module,exports){
-'use strict';
-
-/**
- * Randomize the order of the elements in a given array.
- * @param {Array} arr - The given array.
- * @param {Object} [options] - Optional configuration options.
- * @param {Boolean} [options.copy] - Sets if should return a shuffled copy of the given array. By default it's a falsy value.
- * @param {Function} [options.rng] - Specifies a custom random number generator.
- * @returns {Array}
- */
-function shuffle(arr, options) {
-
-  if (!Array.isArray(arr)) {
-    throw new Error('shuffle expect an array as parameter.');
-  }
-
-  options = options || {};
-
-  var collection = arr,
-      len = arr.length,
-      rng = options.rng || Math.random,
-      random,
-      temp;
-
-  if (options.copy === true) {
-    collection = arr.slice();
-  }
-
-  while (len) {
-    random = Math.floor(rng() * len);
-    len -= 1;
-    temp = collection[len];
-    collection[len] = collection[random];
-    collection[random] = temp;
-  }
-
-  return collection;
-};
-
-/**
- * Pick one or more random elements from the given array.
- * @param {Array} arr - The given array.
- * @param {Object} [options] - Optional configuration options.
- * @param {Number} [options.picks] - Specifies how many random elements you want to pick. By default it picks 1.
- * @param {Function} [options.rng] - Specifies a custom random number generator.
- * @returns {Object}
- */
-shuffle.pick = function(arr, options) {
-
-  if (!Array.isArray(arr)) {
-    throw new Error('shuffle.pick() expect an array as parameter.');
-  }
-
-  options = options || {};
-
-  var rng = options.rng || Math.random,
-      picks = options.picks || 1;
-
-  if (typeof picks === 'number' && picks !== 1) {
-    var len = arr.length,
-        collection = arr.slice(),
-        random = [],
-        index;
-
-    while (picks && len) {
-      index = Math.floor(rng() * len);
-      random.push(collection[index]);
-      collection.splice(index, 1);
-      len -= 1;
-      picks -= 1;
-    }
-
-    return random;
-  }
-
-  return arr[Math.floor(rng() * arr.length)];
-};
-
-/**
- * Expose
- */
-module.exports = shuffle;
-
-},{}],5:[function(require,module,exports){
-function determineModificationRange (args, filesize) {
-	var minArg = parseFloat(args.min);
-	var maxArg = parseFloat(args.max);
-	var startArg = parseInt(args.start, 10);
-	var stopArg = parseInt(args.stop, 10);
-
-	if (isNaN(minArg)) {
-		minArg = undefined;
-	}
-	if (isNaN(maxArg)) {
-		maxArg = undefined;
-	}
-	if (isNaN(startArg)) {
-		startArg = undefined;
-	}
-	if (isNaN(stopArg)) {
-		stopArg = undefined;
-	}
-
-	var startByte;
-	var stopByte;
-
-	if (!minArg && !maxArg && !startArg && !stopArg) {
-		throw new Error('Must specify --min and --max or --start and --stop');
-	}
-
-	if ((minArg || maxArg) && (startArg || stopArg)) {
-		throw new Error(
-			'Cannot use both min/max and start/stop entry methods; ' +
-			'use --min and --max alone or use --start and --stop alone'
-		);
-	}
-
-	if (startArg || stopArg) {
-		if (startArg === undefined || stopArg === undefined) {
-			throw new Error('Must specify both --start and --stop');
-		}
-
-		if (startArg < 0) {
-			throw new Error('--start cannot be less than 0');
-		}
-		if (stopArg > filesize) {
-			throw new Error('--stop cannot be larger than filesize (' + filesize + ')');
-		}
-
-		return {
-			start: startArg,
-			stop: stopArg
-		};
-	}
-
-	if (minArg || maxArg) {
-		if (minArg === undefined || maxArg === undefined) {
-			throw new Error('Must specify both --min and --max');
-		}
-
-		return {
-			start: Math.floor( filesize * minArg ),
-        	stop: Math.floor( filesize * maxArg )
-		};
-	}
-}
-
-function getRandomInt(min, max) {
-    return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-module.exports = {
-	getRandomInt: getRandomInt,
-	determineModificationRange: determineModificationRange
-};
-
-},{}],6:[function(require,module,exports){
+(function(){function r(e,n,t){function o(i,f){if(!n[i]){if(!e[i]){var c="function"==typeof require&&require;if(!f&&c)return c(i,!0);if(u)return u(i,!0);var a=new Error("Cannot find module '"+i+"'");throw a.code="MODULE_NOT_FOUND",a}var p=n[i]={exports:{}};e[i][0].call(p.exports,function(r){var n=e[i][1][r];return o(n||r)},p,p.exports,r,e,n,t)}return n[i].exports}for(var u="function"==typeof require&&require,i=0;i<t.length;i++)o(t[i]);return o}return r})()({1:[function(require,module,exports){
 'use strict'
 
 exports.byteLength = byteLength
@@ -381,68 +15,103 @@ for (var i = 0, len = code.length; i < len; ++i) {
   revLookup[code.charCodeAt(i)] = i
 }
 
+// Support decoding URL-safe base64 strings, as Node.js does.
+// See: https://en.wikipedia.org/wiki/Base64#URL_applications
 revLookup['-'.charCodeAt(0)] = 62
 revLookup['_'.charCodeAt(0)] = 63
 
-function placeHoldersCount (b64) {
+function getLens (b64) {
   var len = b64.length
+
   if (len % 4 > 0) {
     throw new Error('Invalid string. Length must be a multiple of 4')
   }
 
-  // the number of equal signs (place holders)
-  // if there are two placeholders, than the two characters before it
-  // represent one byte
-  // if there is only one, then the three characters before it represent 2 bytes
-  // this is just a cheap hack to not do indexOf twice
-  return b64[len - 2] === '=' ? 2 : b64[len - 1] === '=' ? 1 : 0
+  // Trim off extra bytes after placeholder bytes are found
+  // See: https://github.com/beatgammit/base64-js/issues/42
+  var validLen = b64.indexOf('=')
+  if (validLen === -1) validLen = len
+
+  var placeHoldersLen = validLen === len
+    ? 0
+    : 4 - (validLen % 4)
+
+  return [validLen, placeHoldersLen]
 }
 
+// base64 is 4/3 + up to two characters of the original data
 function byteLength (b64) {
-  // base64 is 4/3 + up to two characters of the original data
-  return b64.length * 3 / 4 - placeHoldersCount(b64)
+  var lens = getLens(b64)
+  var validLen = lens[0]
+  var placeHoldersLen = lens[1]
+  return ((validLen + placeHoldersLen) * 3 / 4) - placeHoldersLen
+}
+
+function _byteLength (b64, validLen, placeHoldersLen) {
+  return ((validLen + placeHoldersLen) * 3 / 4) - placeHoldersLen
 }
 
 function toByteArray (b64) {
-  var i, j, l, tmp, placeHolders, arr
-  var len = b64.length
-  placeHolders = placeHoldersCount(b64)
+  var tmp
+  var lens = getLens(b64)
+  var validLen = lens[0]
+  var placeHoldersLen = lens[1]
 
-  arr = new Arr(len * 3 / 4 - placeHolders)
+  var arr = new Arr(_byteLength(b64, validLen, placeHoldersLen))
+
+  var curByte = 0
 
   // if there are placeholders, only get up to the last complete 4 chars
-  l = placeHolders > 0 ? len - 4 : len
+  var len = placeHoldersLen > 0
+    ? validLen - 4
+    : validLen
 
-  var L = 0
-
-  for (i = 0, j = 0; i < l; i += 4, j += 3) {
-    tmp = (revLookup[b64.charCodeAt(i)] << 18) | (revLookup[b64.charCodeAt(i + 1)] << 12) | (revLookup[b64.charCodeAt(i + 2)] << 6) | revLookup[b64.charCodeAt(i + 3)]
-    arr[L++] = (tmp >> 16) & 0xFF
-    arr[L++] = (tmp >> 8) & 0xFF
-    arr[L++] = tmp & 0xFF
+  var i
+  for (i = 0; i < len; i += 4) {
+    tmp =
+      (revLookup[b64.charCodeAt(i)] << 18) |
+      (revLookup[b64.charCodeAt(i + 1)] << 12) |
+      (revLookup[b64.charCodeAt(i + 2)] << 6) |
+      revLookup[b64.charCodeAt(i + 3)]
+    arr[curByte++] = (tmp >> 16) & 0xFF
+    arr[curByte++] = (tmp >> 8) & 0xFF
+    arr[curByte++] = tmp & 0xFF
   }
 
-  if (placeHolders === 2) {
-    tmp = (revLookup[b64.charCodeAt(i)] << 2) | (revLookup[b64.charCodeAt(i + 1)] >> 4)
-    arr[L++] = tmp & 0xFF
-  } else if (placeHolders === 1) {
-    tmp = (revLookup[b64.charCodeAt(i)] << 10) | (revLookup[b64.charCodeAt(i + 1)] << 4) | (revLookup[b64.charCodeAt(i + 2)] >> 2)
-    arr[L++] = (tmp >> 8) & 0xFF
-    arr[L++] = tmp & 0xFF
+  if (placeHoldersLen === 2) {
+    tmp =
+      (revLookup[b64.charCodeAt(i)] << 2) |
+      (revLookup[b64.charCodeAt(i + 1)] >> 4)
+    arr[curByte++] = tmp & 0xFF
+  }
+
+  if (placeHoldersLen === 1) {
+    tmp =
+      (revLookup[b64.charCodeAt(i)] << 10) |
+      (revLookup[b64.charCodeAt(i + 1)] << 4) |
+      (revLookup[b64.charCodeAt(i + 2)] >> 2)
+    arr[curByte++] = (tmp >> 8) & 0xFF
+    arr[curByte++] = tmp & 0xFF
   }
 
   return arr
 }
 
 function tripletToBase64 (num) {
-  return lookup[num >> 18 & 0x3F] + lookup[num >> 12 & 0x3F] + lookup[num >> 6 & 0x3F] + lookup[num & 0x3F]
+  return lookup[num >> 18 & 0x3F] +
+    lookup[num >> 12 & 0x3F] +
+    lookup[num >> 6 & 0x3F] +
+    lookup[num & 0x3F]
 }
 
 function encodeChunk (uint8, start, end) {
   var tmp
   var output = []
   for (var i = start; i < end; i += 3) {
-    tmp = (uint8[i] << 16) + (uint8[i + 1] << 8) + (uint8[i + 2])
+    tmp =
+      ((uint8[i] << 16) & 0xFF0000) +
+      ((uint8[i + 1] << 8) & 0xFF00) +
+      (uint8[i + 2] & 0xFF)
     output.push(tripletToBase64(tmp))
   }
   return output.join('')
@@ -452,41 +121,45 @@ function fromByteArray (uint8) {
   var tmp
   var len = uint8.length
   var extraBytes = len % 3 // if we have 1 byte left, pad 2 bytes
-  var output = ''
   var parts = []
   var maxChunkLength = 16383 // must be multiple of 3
 
   // go through the array every three bytes, we'll deal with trailing stuff later
   for (var i = 0, len2 = len - extraBytes; i < len2; i += maxChunkLength) {
-    parts.push(encodeChunk(uint8, i, (i + maxChunkLength) > len2 ? len2 : (i + maxChunkLength)))
+    parts.push(encodeChunk(
+      uint8, i, (i + maxChunkLength) > len2 ? len2 : (i + maxChunkLength)
+    ))
   }
 
   // pad the end with zeros, but make sure to not forget the extra bytes
   if (extraBytes === 1) {
     tmp = uint8[len - 1]
-    output += lookup[tmp >> 2]
-    output += lookup[(tmp << 4) & 0x3F]
-    output += '=='
+    parts.push(
+      lookup[tmp >> 2] +
+      lookup[(tmp << 4) & 0x3F] +
+      '=='
+    )
   } else if (extraBytes === 2) {
-    tmp = (uint8[len - 2] << 8) + (uint8[len - 1])
-    output += lookup[tmp >> 10]
-    output += lookup[(tmp >> 4) & 0x3F]
-    output += lookup[(tmp << 2) & 0x3F]
-    output += '='
+    tmp = (uint8[len - 2] << 8) + uint8[len - 1]
+    parts.push(
+      lookup[tmp >> 10] +
+      lookup[(tmp >> 4) & 0x3F] +
+      lookup[(tmp << 2) & 0x3F] +
+      '='
+    )
   }
-
-  parts.push(output)
 
   return parts.join('')
 }
 
-},{}],7:[function(require,module,exports){
+},{}],2:[function(require,module,exports){
 
-},{}],8:[function(require,module,exports){
+},{}],3:[function(require,module,exports){
+(function (Buffer){
 /*!
  * The buffer module from node.js, for the browser.
  *
- * @author   Feross Aboukhadijeh <feross@feross.org> <http://feross.org>
+ * @author   Feross Aboukhadijeh <https://feross.org>
  * @license  MIT
  */
 /* eslint-disable no-proto */
@@ -495,6 +168,10 @@ function fromByteArray (uint8) {
 
 var base64 = require('base64-js')
 var ieee754 = require('ieee754')
+var customInspectSymbol =
+  (typeof Symbol === 'function' && typeof Symbol.for === 'function')
+    ? Symbol.for('nodejs.util.inspect.custom')
+    : null
 
 exports.Buffer = Buffer
 exports.SlowBuffer = SlowBuffer
@@ -531,20 +208,38 @@ function typedArraySupport () {
   // Can typed array instances can be augmented?
   try {
     var arr = new Uint8Array(1)
-    arr.__proto__ = {__proto__: Uint8Array.prototype, foo: function () { return 42 }}
+    var proto = { foo: function () { return 42 } }
+    Object.setPrototypeOf(proto, Uint8Array.prototype)
+    Object.setPrototypeOf(arr, proto)
     return arr.foo() === 42
   } catch (e) {
     return false
   }
 }
 
+Object.defineProperty(Buffer.prototype, 'parent', {
+  enumerable: true,
+  get: function () {
+    if (!Buffer.isBuffer(this)) return undefined
+    return this.buffer
+  }
+})
+
+Object.defineProperty(Buffer.prototype, 'offset', {
+  enumerable: true,
+  get: function () {
+    if (!Buffer.isBuffer(this)) return undefined
+    return this.byteOffset
+  }
+})
+
 function createBuffer (length) {
   if (length > K_MAX_LENGTH) {
-    throw new RangeError('Invalid typed array length')
+    throw new RangeError('The value "' + length + '" is invalid for option "size"')
   }
   // Return an augmented `Uint8Array` instance
   var buf = new Uint8Array(length)
-  buf.__proto__ = Buffer.prototype
+  Object.setPrototypeOf(buf, Buffer.prototype)
   return buf
 }
 
@@ -562,8 +257,8 @@ function Buffer (arg, encodingOrOffset, length) {
   // Common case.
   if (typeof arg === 'number') {
     if (typeof encodingOrOffset === 'string') {
-      throw new Error(
-        'If encoding is specified then the first argument must be a string'
+      throw new TypeError(
+        'The "string" argument must be of type string. Received type number'
       )
     }
     return allocUnsafe(arg)
@@ -571,33 +266,60 @@ function Buffer (arg, encodingOrOffset, length) {
   return from(arg, encodingOrOffset, length)
 }
 
-// Fix subarray() in ES2016. See: https://github.com/feross/buffer/pull/97
-if (typeof Symbol !== 'undefined' && Symbol.species &&
-    Buffer[Symbol.species] === Buffer) {
-  Object.defineProperty(Buffer, Symbol.species, {
-    value: null,
-    configurable: true,
-    enumerable: false,
-    writable: false
-  })
-}
-
 Buffer.poolSize = 8192 // not used by this implementation
 
 function from (value, encodingOrOffset, length) {
-  if (typeof value === 'number') {
-    throw new TypeError('"value" argument must not be a number')
-  }
-
-  if (value instanceof ArrayBuffer) {
-    return fromArrayBuffer(value, encodingOrOffset, length)
-  }
-
   if (typeof value === 'string') {
     return fromString(value, encodingOrOffset)
   }
 
-  return fromObject(value)
+  if (ArrayBuffer.isView(value)) {
+    return fromArrayLike(value)
+  }
+
+  if (value == null) {
+    throw new TypeError(
+      'The first argument must be one of type string, Buffer, ArrayBuffer, Array, ' +
+      'or Array-like Object. Received type ' + (typeof value)
+    )
+  }
+
+  if (isInstance(value, ArrayBuffer) ||
+      (value && isInstance(value.buffer, ArrayBuffer))) {
+    return fromArrayBuffer(value, encodingOrOffset, length)
+  }
+
+  if (typeof SharedArrayBuffer !== 'undefined' &&
+      (isInstance(value, SharedArrayBuffer) ||
+      (value && isInstance(value.buffer, SharedArrayBuffer)))) {
+    return fromArrayBuffer(value, encodingOrOffset, length)
+  }
+
+  if (typeof value === 'number') {
+    throw new TypeError(
+      'The "value" argument must not be of type number. Received type number'
+    )
+  }
+
+  var valueOf = value.valueOf && value.valueOf()
+  if (valueOf != null && valueOf !== value) {
+    return Buffer.from(valueOf, encodingOrOffset, length)
+  }
+
+  var b = fromObject(value)
+  if (b) return b
+
+  if (typeof Symbol !== 'undefined' && Symbol.toPrimitive != null &&
+      typeof value[Symbol.toPrimitive] === 'function') {
+    return Buffer.from(
+      value[Symbol.toPrimitive]('string'), encodingOrOffset, length
+    )
+  }
+
+  throw new TypeError(
+    'The first argument must be one of type string, Buffer, ArrayBuffer, Array, ' +
+    'or Array-like Object. Received type ' + (typeof value)
+  )
 }
 
 /**
@@ -614,14 +336,14 @@ Buffer.from = function (value, encodingOrOffset, length) {
 
 // Note: Change prototype *after* Buffer.from is defined to workaround Chrome bug:
 // https://github.com/feross/buffer/pull/148
-Buffer.prototype.__proto__ = Uint8Array.prototype
-Buffer.__proto__ = Uint8Array
+Object.setPrototypeOf(Buffer.prototype, Uint8Array.prototype)
+Object.setPrototypeOf(Buffer, Uint8Array)
 
 function assertSize (size) {
   if (typeof size !== 'number') {
-    throw new TypeError('"size" argument must be a number')
+    throw new TypeError('"size" argument must be of type number')
   } else if (size < 0) {
-    throw new RangeError('"size" argument must not be negative')
+    throw new RangeError('The value "' + size + '" is invalid for option "size"')
   }
 }
 
@@ -673,7 +395,7 @@ function fromString (string, encoding) {
   }
 
   if (!Buffer.isEncoding(encoding)) {
-    throw new TypeError('"encoding" must be a valid string encoding')
+    throw new TypeError('Unknown encoding: ' + encoding)
   }
 
   var length = byteLength(string, encoding) | 0
@@ -702,11 +424,11 @@ function fromArrayLike (array) {
 
 function fromArrayBuffer (array, byteOffset, length) {
   if (byteOffset < 0 || array.byteLength < byteOffset) {
-    throw new RangeError('\'offset\' is out of bounds')
+    throw new RangeError('"offset" is outside of buffer bounds')
   }
 
   if (array.byteLength < byteOffset + (length || 0)) {
-    throw new RangeError('\'length\' is out of bounds')
+    throw new RangeError('"length" is outside of buffer bounds')
   }
 
   var buf
@@ -719,7 +441,8 @@ function fromArrayBuffer (array, byteOffset, length) {
   }
 
   // Return an augmented `Uint8Array` instance
-  buf.__proto__ = Buffer.prototype
+  Object.setPrototypeOf(buf, Buffer.prototype)
+
   return buf
 }
 
@@ -736,20 +459,16 @@ function fromObject (obj) {
     return buf
   }
 
-  if (obj) {
-    if (isArrayBufferView(obj) || 'length' in obj) {
-      if (typeof obj.length !== 'number' || numberIsNaN(obj.length)) {
-        return createBuffer(0)
-      }
-      return fromArrayLike(obj)
+  if (obj.length !== undefined) {
+    if (typeof obj.length !== 'number' || numberIsNaN(obj.length)) {
+      return createBuffer(0)
     }
-
-    if (obj.type === 'Buffer' && Array.isArray(obj.data)) {
-      return fromArrayLike(obj.data)
-    }
+    return fromArrayLike(obj)
   }
 
-  throw new TypeError('First argument must be a string, Buffer, ArrayBuffer, Array, or array-like object.')
+  if (obj.type === 'Buffer' && Array.isArray(obj.data)) {
+    return fromArrayLike(obj.data)
+  }
 }
 
 function checked (length) {
@@ -770,12 +489,17 @@ function SlowBuffer (length) {
 }
 
 Buffer.isBuffer = function isBuffer (b) {
-  return b != null && b._isBuffer === true
+  return b != null && b._isBuffer === true &&
+    b !== Buffer.prototype // so Buffer.isBuffer(Buffer.prototype) will be false
 }
 
 Buffer.compare = function compare (a, b) {
+  if (isInstance(a, Uint8Array)) a = Buffer.from(a, a.offset, a.byteLength)
+  if (isInstance(b, Uint8Array)) b = Buffer.from(b, b.offset, b.byteLength)
   if (!Buffer.isBuffer(a) || !Buffer.isBuffer(b)) {
-    throw new TypeError('Arguments must be Buffers')
+    throw new TypeError(
+      'The "buf1", "buf2" arguments must be one of type Buffer or Uint8Array'
+    )
   }
 
   if (a === b) return 0
@@ -836,6 +560,9 @@ Buffer.concat = function concat (list, length) {
   var pos = 0
   for (i = 0; i < list.length; ++i) {
     var buf = list[i]
+    if (isInstance(buf, Uint8Array)) {
+      buf = Buffer.from(buf)
+    }
     if (!Buffer.isBuffer(buf)) {
       throw new TypeError('"list" argument must be an Array of Buffers')
     }
@@ -849,15 +576,19 @@ function byteLength (string, encoding) {
   if (Buffer.isBuffer(string)) {
     return string.length
   }
-  if (isArrayBufferView(string) || string instanceof ArrayBuffer) {
+  if (ArrayBuffer.isView(string) || isInstance(string, ArrayBuffer)) {
     return string.byteLength
   }
   if (typeof string !== 'string') {
-    string = '' + string
+    throw new TypeError(
+      'The "string" argument must be one of type string, Buffer, or ArrayBuffer. ' +
+      'Received type ' + typeof string
+    )
   }
 
   var len = string.length
-  if (len === 0) return 0
+  var mustMatch = (arguments.length > 2 && arguments[2] === true)
+  if (!mustMatch && len === 0) return 0
 
   // Use a for loop to avoid recursion
   var loweredCase = false
@@ -869,7 +600,6 @@ function byteLength (string, encoding) {
         return len
       case 'utf8':
       case 'utf-8':
-      case undefined:
         return utf8ToBytes(string).length
       case 'ucs2':
       case 'ucs-2':
@@ -881,7 +611,9 @@ function byteLength (string, encoding) {
       case 'base64':
         return base64ToBytes(string).length
       default:
-        if (loweredCase) return utf8ToBytes(string).length // assume utf8
+        if (loweredCase) {
+          return mustMatch ? -1 : utf8ToBytes(string).length // assume utf8
+        }
         encoding = ('' + encoding).toLowerCase()
         loweredCase = true
     }
@@ -1017,6 +749,8 @@ Buffer.prototype.toString = function toString () {
   return slowToString.apply(this, arguments)
 }
 
+Buffer.prototype.toLocaleString = Buffer.prototype.toString
+
 Buffer.prototype.equals = function equals (b) {
   if (!Buffer.isBuffer(b)) throw new TypeError('Argument must be a Buffer')
   if (this === b) return true
@@ -1026,16 +760,23 @@ Buffer.prototype.equals = function equals (b) {
 Buffer.prototype.inspect = function inspect () {
   var str = ''
   var max = exports.INSPECT_MAX_BYTES
-  if (this.length > 0) {
-    str = this.toString('hex', 0, max).match(/.{2}/g).join(' ')
-    if (this.length > max) str += ' ... '
-  }
+  str = this.toString('hex', 0, max).replace(/(.{2})/g, '$1 ').trim()
+  if (this.length > max) str += ' ... '
   return '<Buffer ' + str + '>'
+}
+if (customInspectSymbol) {
+  Buffer.prototype[customInspectSymbol] = Buffer.prototype.inspect
 }
 
 Buffer.prototype.compare = function compare (target, start, end, thisStart, thisEnd) {
+  if (isInstance(target, Uint8Array)) {
+    target = Buffer.from(target, target.offset, target.byteLength)
+  }
   if (!Buffer.isBuffer(target)) {
-    throw new TypeError('Argument must be a Buffer')
+    throw new TypeError(
+      'The "target" argument must be one of type Buffer or Uint8Array. ' +
+      'Received type ' + (typeof target)
+    )
   }
 
   if (start === undefined) {
@@ -1114,7 +855,7 @@ function bidirectionalIndexOf (buffer, val, byteOffset, encoding, dir) {
   } else if (byteOffset < -0x80000000) {
     byteOffset = -0x80000000
   }
-  byteOffset = +byteOffset  // Coerce to Number.
+  byteOffset = +byteOffset // Coerce to Number.
   if (numberIsNaN(byteOffset)) {
     // byteOffset: it it's undefined, null, NaN, "foo", etc, search whole buffer
     byteOffset = dir ? 0 : (buffer.length - 1)
@@ -1151,7 +892,7 @@ function bidirectionalIndexOf (buffer, val, byteOffset, encoding, dir) {
         return Uint8Array.prototype.lastIndexOf.call(buffer, val, byteOffset)
       }
     }
-    return arrayIndexOf(buffer, [ val ], byteOffset, encoding, dir)
+    return arrayIndexOf(buffer, [val], byteOffset, encoding, dir)
   }
 
   throw new TypeError('val must be string, number or Buffer')
@@ -1237,9 +978,7 @@ function hexWrite (buf, string, offset, length) {
     }
   }
 
-  // must be an even number of digits
   var strLen = string.length
-  if (strLen % 2 !== 0) throw new TypeError('Invalid hex string')
 
   if (length > strLen / 2) {
     length = strLen / 2
@@ -1368,8 +1107,8 @@ function utf8Slice (buf, start, end) {
     var codePoint = null
     var bytesPerSequence = (firstByte > 0xEF) ? 4
       : (firstByte > 0xDF) ? 3
-      : (firstByte > 0xBF) ? 2
-      : 1
+        : (firstByte > 0xBF) ? 2
+          : 1
 
     if (i + bytesPerSequence <= end) {
       var secondByte, thirdByte, fourthByte, tempCodePoint
@@ -1482,7 +1221,7 @@ function hexSlice (buf, start, end) {
 
   var out = ''
   for (var i = start; i < end; ++i) {
-    out += toHex(buf[i])
+    out += hexSliceLookupTable[buf[i]]
   }
   return out
 }
@@ -1519,7 +1258,8 @@ Buffer.prototype.slice = function slice (start, end) {
 
   var newBuf = this.subarray(start, end)
   // Return an augmented `Uint8Array` instance
-  newBuf.__proto__ = Buffer.prototype
+  Object.setPrototypeOf(newBuf, Buffer.prototype)
+
   return newBuf
 }
 
@@ -1932,6 +1672,7 @@ Buffer.prototype.writeDoubleBE = function writeDoubleBE (value, offset, noAssert
 
 // copy(targetBuffer, targetStart=0, sourceStart=0, sourceEnd=buffer.length)
 Buffer.prototype.copy = function copy (target, targetStart, start, end) {
+  if (!Buffer.isBuffer(target)) throw new TypeError('argument should be a Buffer')
   if (!start) start = 0
   if (!end && end !== 0) end = this.length
   if (targetStart >= target.length) targetStart = target.length
@@ -1946,7 +1687,7 @@ Buffer.prototype.copy = function copy (target, targetStart, start, end) {
   if (targetStart < 0) {
     throw new RangeError('targetStart out of bounds')
   }
-  if (start < 0 || start >= this.length) throw new RangeError('sourceStart out of bounds')
+  if (start < 0 || start >= this.length) throw new RangeError('Index out of range')
   if (end < 0) throw new RangeError('sourceEnd out of bounds')
 
   // Are we oob?
@@ -1956,22 +1697,19 @@ Buffer.prototype.copy = function copy (target, targetStart, start, end) {
   }
 
   var len = end - start
-  var i
 
-  if (this === target && start < targetStart && targetStart < end) {
+  if (this === target && typeof Uint8Array.prototype.copyWithin === 'function') {
+    // Use built-in when available, missing from IE11
+    this.copyWithin(targetStart, start, end)
+  } else if (this === target && start < targetStart && targetStart < end) {
     // descending copy from end
-    for (i = len - 1; i >= 0; --i) {
-      target[i + targetStart] = this[i + start]
-    }
-  } else if (len < 1000) {
-    // ascending copy from start
-    for (i = 0; i < len; ++i) {
+    for (var i = len - 1; i >= 0; --i) {
       target[i + targetStart] = this[i + start]
     }
   } else {
     Uint8Array.prototype.set.call(
       target,
-      this.subarray(start, start + len),
+      this.subarray(start, end),
       targetStart
     )
   }
@@ -1994,20 +1732,24 @@ Buffer.prototype.fill = function fill (val, start, end, encoding) {
       encoding = end
       end = this.length
     }
-    if (val.length === 1) {
-      var code = val.charCodeAt(0)
-      if (code < 256) {
-        val = code
-      }
-    }
     if (encoding !== undefined && typeof encoding !== 'string') {
       throw new TypeError('encoding must be a string')
     }
     if (typeof encoding === 'string' && !Buffer.isEncoding(encoding)) {
       throw new TypeError('Unknown encoding: ' + encoding)
     }
+    if (val.length === 1) {
+      var code = val.charCodeAt(0)
+      if ((encoding === 'utf8' && code < 128) ||
+          encoding === 'latin1') {
+        // Fast path: If `val` fits into a single byte, use that numeric value.
+        val = code
+      }
+    }
   } else if (typeof val === 'number') {
     val = val & 255
+  } else if (typeof val === 'boolean') {
+    val = Number(val)
   }
 
   // Invalid ranges are not set to a default, so can range check early.
@@ -2032,8 +1774,12 @@ Buffer.prototype.fill = function fill (val, start, end, encoding) {
   } else {
     var bytes = Buffer.isBuffer(val)
       ? val
-      : new Buffer(val, encoding)
+      : Buffer.from(val, encoding)
     var len = bytes.length
+    if (len === 0) {
+      throw new TypeError('The value "' + val +
+        '" is invalid for argument "value"')
+    }
     for (i = 0; i < end - start; ++i) {
       this[i + start] = bytes[i % len]
     }
@@ -2048,6 +1794,8 @@ Buffer.prototype.fill = function fill (val, start, end, encoding) {
 var INVALID_BASE64_RE = /[^+/0-9A-Za-z-_]/g
 
 function base64clean (str) {
+  // Node takes equal signs as end of the Base64 encoding
+  str = str.split('=')[0]
   // Node strips out invalid characters like \n and \t from the string, base64-js does not
   str = str.trim().replace(INVALID_BASE64_RE, '')
   // Node converts strings with length < 2 to ''
@@ -2057,11 +1805,6 @@ function base64clean (str) {
     str = str + '='
   }
   return str
-}
-
-function toHex (n) {
-  if (n < 16) return '0' + n.toString(16)
-  return n.toString(16)
 }
 
 function utf8ToBytes (string, units) {
@@ -2181,19 +1924,400 @@ function blitBuffer (src, dst, offset, length) {
   return i
 }
 
-// Node 0.10 supports `ArrayBuffer` but lacks `ArrayBuffer.isView`
-function isArrayBufferView (obj) {
-  return (typeof ArrayBuffer.isView === 'function') && ArrayBuffer.isView(obj)
+// ArrayBuffer or Uint8Array objects from other contexts (i.e. iframes) do not pass
+// the `instanceof` check but they should be treated as of that type.
+// See: https://github.com/feross/buffer/issues/166
+function isInstance (obj, type) {
+  return obj instanceof type ||
+    (obj != null && obj.constructor != null && obj.constructor.name != null &&
+      obj.constructor.name === type.name)
 }
-
 function numberIsNaN (obj) {
+  // For IE11 support
   return obj !== obj // eslint-disable-line no-self-compare
 }
 
-},{"base64-js":6,"ieee754":9}],9:[function(require,module,exports){
+// Create lookup table for `toString('hex')`
+// See: https://github.com/feross/buffer/issues/219
+var hexSliceLookupTable = (function () {
+  var alphabet = '0123456789abcdef'
+  var table = new Array(256)
+  for (var i = 0; i < 16; ++i) {
+    var i16 = i * 16
+    for (var j = 0; j < 16; ++j) {
+      table[i16 + j] = alphabet[i] + alphabet[j]
+    }
+  }
+  return table
+})()
+
+}).call(this,require("buffer").Buffer)
+},{"base64-js":1,"buffer":3,"ieee754":8}],4:[function(require,module,exports){
+(function (process){
+var fs = require( 'fs' );
+var path = require('path');
+var util = require('../util');
+
+var api = module.exports = {
+    command: 'destroy',
+    desc: 'overwrite file with random data',
+    builder: function (yargs) {
+        var options = {
+            times: {
+                alias: 't',
+                describe: 'the number of times to corrupt a byte',
+                type: 'number'
+            },
+            continuous: {
+                alias: 'c',
+                describe: 'whether or not to randomly continue corrupting the next piece of data',
+                'default': false,
+                type: 'boolean'
+            },
+            'continuous-chance': {
+                alias: 'C',
+                describe: 'the percent chance from 0 - 1 (0.1 = 10%, 1 = 100%) to continue corrupting the immediate next byte after the last byte instead of corrupting a random next byte',
+                'default': 0.6,
+                type: 'number'
+            }
+        };
+
+        return yargs.options(options)
+            .example('$0 destroy --min 0.3 --max 0.8 --input file.jpg --output file_byebyte.jpg');
+    },
+    handler: function (argv) {
+        var continuous = argv.c || argv.continuous;
+        var continuousChance = argv.C || argv.continuousChance || 0.6;
+
+        var times = argv.t || argv.times || 50;
+        var filepath = argv.i || argv.input;
+        var out = argv.o || argv.output;
+        var fileBuffer = fs.readFileSync( path.resolve( process.cwd(), filepath ) );
+        var len = fileBuffer.length;
+        var startStop = util.determineModificationRange(argv, len);
+        var start = startStop.start;
+        var stop = startStop.stop;
+        console.log( "File length: " + len );
+        console.log( "Randomly assigning hex values within bytes " + start + " and " + stop);
+
+        fileBuffer = api.fn(fileBuffer, {
+          times: times,
+          start: start,
+          stop: stop,
+          continuous: continuous,
+          continuousChance: continuousChance
+        });
+
+        fs.writeFileSync( path.resolve( process.cwd(), out ), fileBuffer );
+        console.log( 'Replaced ' + times + ' byte(s) with trash and exported to ' + out + '.' );
+    },
+    fn: function(fileBuffer, opts) {
+        var getRandomInt = opts.getRandomInt || util.getRandomInt;
+        var continuous = opts.continuous || false;
+        var continuousChance = opts.continuousChance || 0.6;
+        var times = opts.times || 50;
+
+        var len = fileBuffer.length;
+
+        util.checkGeneralLength(opts, len);
+
+        var terms = opts.min !== undefined ? ['min', 'max'] : ['start', 'stop'];
+        var startStop = util.determineModificationRange(opts, len);
+        var start = startStop.start;
+        var stop = startStop.stop;
+        if (start > stop) {
+          throw new Error(`${terms[0]} must be smaller than ${terms[1]}`);
+        }
+
+        var offset = getRandomInt(start, stop);
+        for (var i = 0; i < times; i++) {
+            fileBuffer[ offset ] = getRandomInt(1, 255);
+
+            // If we have continuous set to true, and trying to continue would
+            // not run off the range of the buffer, we continue on to the next
+            // pixel slot to override if we beat our continuousChance. If not,
+            // we go to a random place within our range.
+            if (continuous && (offset + 1 <= len)) {
+                if ((continuousChance > Math.random()) && (offset + 1 <= stop)) {
+                    offset++;
+                } else {
+                    offset = getRandomInt(start, stop);
+                }
+            } else {
+                offset = getRandomInt(start, stop);
+            }
+        }
+
+        return fileBuffer;
+      
+    }
+};
+
+}).call(this,require('_process'))
+},{"../util":7,"_process":10,"fs":2,"path":9}],5:[function(require,module,exports){
+(function (process,Buffer){
+var fs = require( 'fs' );
+var path = require('path');
+var util = require('../util');
+var shuffle = require('shuffle-array')
+
+/**
+ * Shuffle - works by taking the file and splitting it into various chunks.
+ *
+ * Chunks can have a specific length randomly determined by range
+ * The chunks are then sorted according to 
+ */
+
+var api = module.exports = {
+    command: 'shuffle',
+    desc: 'reorder the data in the file',
+    builder: function (yargs) {
+        var options = {
+            'chunk-min': {
+                describe: 'the minimum size a shuffled chunk may be',
+                type: 'number',
+                demand: true
+            },
+            'chunk-max': {
+                describe: 'the maximum size a shuffled chunk may be',
+                type: 'number',
+                demand: true
+            }
+        };
+
+        return yargs.options(options)
+            .usage([
+                'Shuffle builds a new file with the contents of the file shuffled into random chunks with ',
+                'each chunk being a random size between the specified --chunk-min and --chunk-max.'
+            ].join(''))
+            .example('$0 shuffle --chunk-min 40 --chunk-max 1000 --min 0.3 --max 0.8 --input file.jpg --output file_byebyte.jpg');
+    },
+    handler: function (argv) {
+        var filepath = argv.i || argv.input;
+        var out = argv.o || argv.output;
+        var fileBuffer = fs.readFileSync( path.resolve( process.cwd(), filepath ) );
+        var len = fileBuffer.length;
+       var startStop = util.determineModificationRange(argv, len);
+        var start = startStop.start;
+        var stop = startStop.stop;
+        console.log( "File length: " + len );
+        console.log( "Randomly shuffling chunks between " + start + " and " + stop);
+
+        var buf = api.fn(fileBuffer, {
+          start: start,
+          stop: stop,
+          chunkMin: argv['chunk-min'],
+          chunkMax: argv['chunk-max'],
+        });
+
+        fs.writeFileSync( path.resolve( process.cwd(), out ), buf );
+        console.log('Reshuffled bytes and wrote to ' + out + '.');
+    },
+    fn: function(fileBuffer, opts) {
+        var getRandomInt = opts.getRandomInt || util.getRandomInt;
+        var getRandomFloat = function() {
+          var max = 10000000000000;
+          var i = getRandomInt(0, max);
+          return i / max;
+        };
+        var len = fileBuffer.length;
+
+        util.checkGeneralLength(opts, len);
+
+        var terms = opts.min !== undefined ? ['min', 'max'] : ['start', 'stop'];
+        var startStop = util.determineModificationRange(opts, len);
+        var start = startStop.start;
+        var stop = startStop.stop;
+        if (start > stop) {
+          throw new Error(`${terms[0]} must be smaller than ${terms[1]}`);
+        }
+
+        if (opts.chunkMin === undefined) {
+          throw new Error('chunkMin must be provided');
+        }
+
+        if (opts.chunkMin <= 0) {
+          throw new Error('chunkMin must be > 0');
+        }
+
+        if (opts.chunkMax === undefined) {
+          throw new Error('chunkMax must be provided');
+        }
+
+        if (opts.chunkMin > opts.chunkMax) {
+          throw new Error('chunkMin must be <= chunkMax');
+        }
+
+        var chunkBuf = fileBuffer.slice(start, stop);
+        var chunkBufLen = chunkBuf.length;
+        var chunks = [];
+
+        var index = 0;
+        while (index < chunkBufLen) {
+            var bufLeft = chunkBufLen - index;
+            var chunkSize = getRandomInt(opts.chunkMin, opts.chunkMax);
+            if (chunkSize > bufLeft) {
+                chunkSize = bufLeft;
+            }
+
+            var chunk = chunkBuf.slice(index, index + chunkSize);
+            chunks.push(chunk);
+
+            index += chunkSize;
+        }
+
+        var buf = Buffer.alloc(len);
+        var bufIndex = 0;
+        if (start > 0) {
+            fileBuffer.copy(buf, bufIndex, 0, start);
+            bufIndex = start;
+        }
+
+        shuffle(chunks, {rng: getRandomFloat});
+
+        chunks.forEach(function (chunk) {
+            var time = Date.now();
+            chunk.copy(buf, bufIndex, 0, chunk.length);
+            bufIndex += chunk.length;
+            var doneTime = Date.now();
+        });
+
+        if (stop < len) {
+            fileBuffer.copy(buf, bufIndex, stop, len);
+        }
+
+        return buf;
+    }
+};
+
+}).call(this,require('_process'),require("buffer").Buffer)
+},{"../util":7,"_process":10,"buffer":3,"fs":2,"path":9,"shuffle-array":11}],6:[function(require,module,exports){
+module.exports = {
+  shuffle: require('./commands/shuffle').fn,
+  destroy: require('./commands/destroy').fn
+};
+
+
+},{"./commands/destroy":4,"./commands/shuffle":5}],7:[function(require,module,exports){
+function determineModificationRange (args, filesize) {
+	var minArg = parseFloat(args.min);
+	var maxArg = parseFloat(args.max);
+	var startArg = parseInt(args.start, 10);
+	var stopArg = parseInt(args.stop, 10);
+
+	if (isNaN(minArg)) {
+		minArg = undefined;
+	}
+	if (isNaN(maxArg)) {
+		maxArg = undefined;
+	}
+	if (isNaN(startArg)) {
+		startArg = undefined;
+	}
+	if (isNaN(stopArg)) {
+		stopArg = undefined;
+	}
+
+	var startByte;
+	var stopByte;
+
+	if (!minArg && !maxArg && !startArg && !stopArg) {
+		throw new Error('Must specify --min and --max or --start and --stop');
+	}
+
+	if ((minArg || maxArg) && (startArg || stopArg)) {
+		throw new Error(
+			'Cannot use both min/max and start/stop entry methods; ' +
+			'use --min and --max alone or use --start and --stop alone'
+		);
+	}
+
+	if (startArg || stopArg) {
+		if (startArg === undefined || stopArg === undefined) {
+			throw new Error('Must specify both --start and --stop');
+		}
+
+		if (startArg < 0) {
+			throw new Error('--start cannot be less than 0');
+		}
+		if (stopArg > filesize) {
+			throw new Error('--stop cannot be larger than filesize (' + filesize + ')');
+		}
+
+		return {
+			start: startArg,
+			stop: stopArg
+		};
+	}
+
+	if (minArg || maxArg) {
+		if (minArg === undefined || maxArg === undefined) {
+			throw new Error('Must specify both --min and --max');
+		}
+
+		return {
+			start: Math.floor( filesize * minArg ),
+        	stop: Math.floor( filesize * maxArg )
+		};
+	}
+}
+
+function getRandomInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function checkGeneralLength(opts, len) {
+    var hasMinMax = opts.min !== undefined || opts.max !== undefined;
+    var hasStartStop = opts.start !== undefined || opts.stop !== undefined;
+
+    if (hasMinMax && hasStartStop) {
+      throw new Error('min/max and start/stop cannot be used together');  
+    }
+
+    if (hasStartStop && opts.stop === undefined) {
+      throw new Error('stop must be provided');
+    }
+
+    if (hasStartStop && opts.start === undefined) {
+      throw new Error('start must be provided');
+    }
+
+    if (hasMinMax && opts.max === undefined) {
+      throw new Error('max must be provided');
+    }
+
+    if (hasMinMax && opts.min === undefined) {
+      throw new Error('min must be provided');
+    }
+
+    if ((opts.min || 0) < 0) {
+      throw new Error('min must be >= 0');
+    }
+
+    if ((opts.max || 0) > 1) {
+      throw new Error('max must be <= 1');
+    }
+
+    if ((opts.start || 0) < 0) {
+      throw new Error('start must be >= 0');
+    }
+
+    if ((opts.stop || 0) > len) {
+      throw new Error('stop must be <= the length of the file buffer');
+    }
+  
+}
+
+module.exports = {
+   checkGeneralLength: checkGeneralLength,
+	  getRandomInt: getRandomInt,
+	  determineModificationRange: determineModificationRange
+};
+
+},{}],8:[function(require,module,exports){
 exports.read = function (buffer, offset, isLE, mLen, nBytes) {
   var e, m
-  var eLen = nBytes * 8 - mLen - 1
+  var eLen = (nBytes * 8) - mLen - 1
   var eMax = (1 << eLen) - 1
   var eBias = eMax >> 1
   var nBits = -7
@@ -2206,12 +2330,12 @@ exports.read = function (buffer, offset, isLE, mLen, nBytes) {
   e = s & ((1 << (-nBits)) - 1)
   s >>= (-nBits)
   nBits += eLen
-  for (; nBits > 0; e = e * 256 + buffer[offset + i], i += d, nBits -= 8) {}
+  for (; nBits > 0; e = (e * 256) + buffer[offset + i], i += d, nBits -= 8) {}
 
   m = e & ((1 << (-nBits)) - 1)
   e >>= (-nBits)
   nBits += mLen
-  for (; nBits > 0; m = m * 256 + buffer[offset + i], i += d, nBits -= 8) {}
+  for (; nBits > 0; m = (m * 256) + buffer[offset + i], i += d, nBits -= 8) {}
 
   if (e === 0) {
     e = 1 - eBias
@@ -2226,7 +2350,7 @@ exports.read = function (buffer, offset, isLE, mLen, nBytes) {
 
 exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
   var e, m, c
-  var eLen = nBytes * 8 - mLen - 1
+  var eLen = (nBytes * 8) - mLen - 1
   var eMax = (1 << eLen) - 1
   var eBias = eMax >> 1
   var rt = (mLen === 23 ? Math.pow(2, -24) - Math.pow(2, -77) : 0)
@@ -2259,7 +2383,7 @@ exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
       m = 0
       e = eMax
     } else if (e + eBias >= 1) {
-      m = (value * c - 1) * Math.pow(2, mLen)
+      m = ((value * c) - 1) * Math.pow(2, mLen)
       e = e + eBias
     } else {
       m = value * Math.pow(2, eBias - 1) * Math.pow(2, mLen)
@@ -2276,8 +2400,11 @@ exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
   buffer[offset + i - d] |= s * 128
 }
 
-},{}],10:[function(require,module,exports){
+},{}],9:[function(require,module,exports){
 (function (process){
+// .dirname, .basename, and .extname methods are extracted from Node.js v8.11.1,
+// backported and transplited with Babel, with backwards-compat fixes
+
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -2328,14 +2455,6 @@ function normalizeArray(parts, allowAboveRoot) {
 
   return parts;
 }
-
-// Split a filename into [root, dir, basename, ext], unix version
-// 'root' is just a slash, or nothing.
-var splitPathRe =
-    /^(\/?|)([\s\S]*?)((?:\.{1,2}|[^\/]+?|)(\.[^.\/]*|))(?:[\/]*)$/;
-var splitPath = function(filename) {
-  return splitPathRe.exec(filename).slice(1);
-};
 
 // path.resolve([from ...], to)
 // posix version
@@ -2452,37 +2571,120 @@ exports.relative = function(from, to) {
 exports.sep = '/';
 exports.delimiter = ':';
 
-exports.dirname = function(path) {
-  var result = splitPath(path),
-      root = result[0],
-      dir = result[1];
-
-  if (!root && !dir) {
-    // No dirname whatsoever
-    return '.';
+exports.dirname = function (path) {
+  if (typeof path !== 'string') path = path + '';
+  if (path.length === 0) return '.';
+  var code = path.charCodeAt(0);
+  var hasRoot = code === 47 /*/*/;
+  var end = -1;
+  var matchedSlash = true;
+  for (var i = path.length - 1; i >= 1; --i) {
+    code = path.charCodeAt(i);
+    if (code === 47 /*/*/) {
+        if (!matchedSlash) {
+          end = i;
+          break;
+        }
+      } else {
+      // We saw the first non-path separator
+      matchedSlash = false;
+    }
   }
 
-  if (dir) {
-    // It has a dirname, strip trailing slash
-    dir = dir.substr(0, dir.length - 1);
+  if (end === -1) return hasRoot ? '/' : '.';
+  if (hasRoot && end === 1) {
+    // return '//';
+    // Backwards-compat fix:
+    return '/';
   }
-
-  return root + dir;
+  return path.slice(0, end);
 };
 
+function basename(path) {
+  if (typeof path !== 'string') path = path + '';
 
-exports.basename = function(path, ext) {
-  var f = splitPath(path)[2];
-  // TODO: make this comparison case-insensitive on windows?
+  var start = 0;
+  var end = -1;
+  var matchedSlash = true;
+  var i;
+
+  for (i = path.length - 1; i >= 0; --i) {
+    if (path.charCodeAt(i) === 47 /*/*/) {
+        // If we reached a path separator that was not part of a set of path
+        // separators at the end of the string, stop now
+        if (!matchedSlash) {
+          start = i + 1;
+          break;
+        }
+      } else if (end === -1) {
+      // We saw the first non-path separator, mark this as the end of our
+      // path component
+      matchedSlash = false;
+      end = i + 1;
+    }
+  }
+
+  if (end === -1) return '';
+  return path.slice(start, end);
+}
+
+// Uses a mixed approach for backwards-compatibility, as ext behavior changed
+// in new Node.js versions, so only basename() above is backported here
+exports.basename = function (path, ext) {
+  var f = basename(path);
   if (ext && f.substr(-1 * ext.length) === ext) {
     f = f.substr(0, f.length - ext.length);
   }
   return f;
 };
 
+exports.extname = function (path) {
+  if (typeof path !== 'string') path = path + '';
+  var startDot = -1;
+  var startPart = 0;
+  var end = -1;
+  var matchedSlash = true;
+  // Track the state of characters (if any) we see before our first dot and
+  // after any path separator we find
+  var preDotState = 0;
+  for (var i = path.length - 1; i >= 0; --i) {
+    var code = path.charCodeAt(i);
+    if (code === 47 /*/*/) {
+        // If we reached a path separator that was not part of a set of path
+        // separators at the end of the string, stop now
+        if (!matchedSlash) {
+          startPart = i + 1;
+          break;
+        }
+        continue;
+      }
+    if (end === -1) {
+      // We saw the first non-path separator, mark this as the end of our
+      // extension
+      matchedSlash = false;
+      end = i + 1;
+    }
+    if (code === 46 /*.*/) {
+        // If this is our first dot, mark it as the start of our extension
+        if (startDot === -1)
+          startDot = i;
+        else if (preDotState !== 1)
+          preDotState = 1;
+    } else if (startDot !== -1) {
+      // We saw a non-dot and non-path separator before our dot, so we should
+      // have a good chance at having a non-empty extension
+      preDotState = -1;
+    }
+  }
 
-exports.extname = function(path) {
-  return splitPath(path)[3];
+  if (startDot === -1 || end === -1 ||
+      // We saw a non-dot character immediately before the dot
+      preDotState === 0 ||
+      // The (right-most) trimmed path component is exactly '..'
+      preDotState === 1 && startDot === end - 1 && startDot === startPart + 1) {
+    return '';
+  }
+  return path.slice(startDot, end);
 };
 
 function filter (xs, f) {
@@ -2504,7 +2706,7 @@ var substr = 'ab'.substr(-1) === 'b'
 ;
 
 }).call(this,require('_process'))
-},{"_process":11}],11:[function(require,module,exports){
+},{"_process":10}],10:[function(require,module,exports){
 // shim for using process in browser
 var process = module.exports = {};
 
@@ -2675,6 +2877,10 @@ process.off = noop;
 process.removeListener = noop;
 process.removeAllListeners = noop;
 process.emit = noop;
+process.prependListener = noop;
+process.prependOnceListener = noop;
+
+process.listeners = function (name) { return [] }
 
 process.binding = function (name) {
     throw new Error('process.binding is not supported');
@@ -2686,7 +2892,92 @@ process.chdir = function (dir) {
 };
 process.umask = function() { return 0; };
 
+},{}],11:[function(require,module,exports){
+'use strict';
+
+/**
+ * Randomize the order of the elements in a given array.
+ * @param {Array} arr - The given array.
+ * @param {Object} [options] - Optional configuration options.
+ * @param {Boolean} [options.copy] - Sets if should return a shuffled copy of the given array. By default it's a falsy value.
+ * @param {Function} [options.rng] - Specifies a custom random number generator.
+ * @returns {Array}
+ */
+function shuffle(arr, options) {
+
+  if (!Array.isArray(arr)) {
+    throw new Error('shuffle expect an array as parameter.');
+  }
+
+  options = options || {};
+
+  var collection = arr,
+      len = arr.length,
+      rng = options.rng || Math.random,
+      random,
+      temp;
+
+  if (options.copy === true) {
+    collection = arr.slice();
+  }
+
+  while (len) {
+    random = Math.floor(rng() * len);
+    len -= 1;
+    temp = collection[len];
+    collection[len] = collection[random];
+    collection[random] = temp;
+  }
+
+  return collection;
+};
+
+/**
+ * Pick one or more random elements from the given array.
+ * @param {Array} arr - The given array.
+ * @param {Object} [options] - Optional configuration options.
+ * @param {Number} [options.picks] - Specifies how many random elements you want to pick. By default it picks 1.
+ * @param {Function} [options.rng] - Specifies a custom random number generator.
+ * @returns {Object}
+ */
+shuffle.pick = function(arr, options) {
+
+  if (!Array.isArray(arr)) {
+    throw new Error('shuffle.pick() expect an array as parameter.');
+  }
+
+  options = options || {};
+
+  var rng = options.rng || Math.random,
+      picks = options.picks || 1;
+
+  if (typeof picks === 'number' && picks !== 1) {
+    var len = arr.length,
+        collection = arr.slice(),
+        random = [],
+        index;
+
+    while (picks && len) {
+      index = Math.floor(rng() * len);
+      random.push(collection[index]);
+      collection.splice(index, 1);
+      len -= 1;
+      picks -= 1;
+    }
+
+    return random;
+  }
+
+  return arr[Math.floor(rng() * arr.length)];
+};
+
+/**
+ * Expose
+ */
+module.exports = shuffle;
+
 },{}],12:[function(require,module,exports){
+(function (process){
 var rand = require('./rand');
 var byebyte = require('byebyte');
 var Buffer = require('buffer/').Buffer;
@@ -2747,21 +3038,22 @@ function rand(min, max) {
 };
 
 
-},{"./rand":14,"buffer/":8,"byebyte":3}],13:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./rand":14,"_process":10,"buffer/":3,"byebyte":6}],13:[function(require,module,exports){
 var GlitchImage = require('./glitch-image');
 
 var accessToken = 'pk.eyJ1IjoibWN3aGl0dGVtb3JlIiwiYSI6IjI5Y2dTd1UifQ.7nBmjzRZ4M3bzEwoo3YIAQ';
 
 var mymap = L.map('map').setView([43.790833, -71.411111], 12);
 
-var tileUrl = 'https://api.tiles.mapbox.com/v4/{id}/{z}/{x}/{y}.webp?access_token={accessToken}';
+var tileUrl = 'https://api.mapbox.com/styles/v1/mapbox/{id}/tiles/{z}/{x}/{y}?access_token={accessToken}';
 
 var attr = 'Map data &copy; <a href="http://openstreetmap.org">OpenStreetMap</a> contributors, <a href="http://creativecommons.org/licenses/by-sa/2.0/">CC-BY-SA</a>, Imagery © <a href="http://mapbox.com">Mapbox</a>';
 
 var layer = L.tileLayer(tileUrl, {
     attribution: attr,
     maxZoom: 18,
-    id: 'mapbox.streets-satellite',
+    id: 'satellite-streets-v11',
     accessToken: accessToken
   });
 
