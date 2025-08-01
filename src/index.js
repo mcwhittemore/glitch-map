@@ -1,6 +1,6 @@
 var GlitchImage = require('./glitch-image');
 
-var accessToken = 'pk.eyJ1IjoibWN3aGl0dGVtb3JlIiwiYSI6IjI5Y2dTd1UifQ.7nBmjzRZ4M3bzEwoo3YIAQ';
+var accessToken = 'pk.eyJ1IjoibWN3aGl0dGVtb3JlIiwiYSI6ImNtZHMzZGVybzBvZTYybXEzdHNuY3Rud3QifQ.2YTIKfEuqnglwBkh3m4IUg';
 
 var mymap = L.map('map').setView([43.790833, -71.411111], 12);
 
